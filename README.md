@@ -6,6 +6,8 @@ Research question: **How do multinational corporations from geopolitical adversa
 
 Based on firm-level lobbying disclosure data from [LobbyView.org](https://www.lobbyview.org/), the study employs causal inference methods to demonstrate how sanctions can unintentionally increase foreign corporate political engagement.
 
+![Huawei Lobbying Expenditure (2008-2022)](Figure/huawei_lobbying_trend.png)
+
 ## Contents
 
 ### `data_analysis.ipynb`
@@ -24,4 +26,4 @@ Based on firm-level lobbying disclosure data from [LobbyView.org](https://www.lo
 
 Data is derived from U.S. Senate lobbying disclosures compiled by [LobbyView.org](https://www.lobbyview.org/). Access to the dataset is available upon request.
 
-![Huawei Lobbying Expenditure (2008-2022)](Figure/huawei_lobbying_trend.png)
+![Huawei Lobbying Expenditure (2008-2022)](Figure/did_graph.png)
