@@ -1,0 +1,81 @@
+---
+title: "Casual Impact Analysis"
+output: html_document
+date: "2024-11-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r pressure, echo=FALSE}
+library(CausalImpact)
+library(zoo)
+library(dplyr)
+library(AER)
+library(modelsummary)
+library(broom)
+```
+
+```{r}
+data <- read.csv("huawei.csv")
+data$amount <- pmax(0, data$amount)
+data$quarter_date <- as.yearqtr(paste(data$filing_year, data$filing_period_code, sep = " "), format = "%Y Q%q")
+lobbying_ts <- zoo(data$amount, data$quarter_date)
+```
+
+```{r}
+pre.period <- as.yearqtr(c("2008 Q4", "2019 Q2"))
+post.period <- as.yearqtr(c("2019 Q3", "2022 Q4"))
+
+impact <- CausalImpact(lobbying_ts, pre.period, post.period)
+plot(impact)
+summary(impact, "report")
+```
+
+
+```{r}
+# Step 1: Calculate and compare pre-intervention fluctuations
+pre_data <- lobbying_ts[time(lobbying_ts) >= pre.period[1] & time(lobbying_ts) <= pre.period[2]]
+post_data <- lobbying_ts[time(lobbying_ts) >= post.period[1] & time(lobbying_ts) <= post.period[2]]
+
+pre_mean <- mean(pre_data, na.rm = TRUE)
+pre_sd <- sd(pre_data, na.rm = TRUE)
+post_mean <- mean(post_data, na.rm = TRUE)
+
+cat("Pre-Intervention Average:", pre_mean, "\n")
+cat("Pre-Intervention Standard Deviation:", pre_sd, "\n")
+cat("Post-Intervention Average:", post_mean, "\n")
+cat("Increase in Lobbying Expenditure:", post_mean - pre_mean, "\n")
+
+# Compare relative scale of post-intervention increase
+increase_magnitude <- (post_mean - pre_mean) / pre_sd
+cat("Post-intervention increase in terms of pre-intervention standard deviations:", increase_magnitude, "\n")
+```
+
+```{r}
+# Step 2: Placebo Test (pseudo-intervention within pre-period)
+# Filter lobbying_ts to include only pre-intervention data (2009 Q1 to 2019 Q2)
+lobbying_ts_pre <- lobbying_ts[index(lobbying_ts) <= as.yearqtr("2019 Q2")]
+
+# Define placebo pre- and post-periods within the pre-intervention data
+placebo_pre.period <- as.yearqtr(c("2008 Q4", "2016 Q4"))
+placebo_post.period <- as.yearqtr(c("2017 Q1", "2019 Q2"))
+
+placebo_impact <- CausalImpact(lobbying_ts_pre, placebo_pre.period, placebo_post.period)
+plot(placebo_impact)
+summary(placebo_impact)
+ 
+```
+
+
+```{r}
+pre_trend_data <- data.frame(time = index(pre_data), amount = coredata(pre_data))
+pre_trend_model <- lm(amount ~ time, data = pre_trend_data)
+modelsummary(pre_trend_model,
+             title = "Regression Results",
+             statistic = "({std.error}){stars}",
+             stars = c('*' = 0.05, '**' = 0.01, '***' = 0.001))
+```
+
+

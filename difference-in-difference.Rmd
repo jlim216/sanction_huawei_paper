@@ -1,0 +1,210 @@
+---
+title: "DiD"
+output: html_document
+date: "2024-11-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r cars}
+library(dplyr)
+library(ggplot2)
+library(broom)
+library(fixest)
+library(tidyverse)
+library(lubridate)
+library(fixest)
+library(modelsummary)
+```
+
+```{r pressure, echo=FALSE}
+df <- read_csv("combined_df.csv")
+```
+
+```{r}
+df <- df %>%
+  mutate(
+    date = as.Date(time, format = "%Y-%m-%d"),
+    post = ifelse(date >= as.Date("2019-07-01"), 1, 0),
+    interaction = treatment * post,
+    log_amount = log(amount + 1)
+  )
+```
+
+```{r}
+cutoff_date <- as.Date("2019-05-14")
+pre_trends <- df %>%
+  filter(date < cutoff_date) %>%
+  group_by(client_name) %>%
+  summarize(
+    pre_trend = coef(lm(log_amount ~ as.numeric(date)))[2],
+    avg_amount = mean(log_amount, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+```{r}
+huawei_slope <- pre_trends %>% filter(client_name== "HUAWEI TECHNOLOGIES") %>% pull(pre_trend)
+```
+
+```{r}
+# Filter firms within the acceptable amount range
+similar_amount_firms <- pre_trends %>%
+  filter(
+    !client_name %in% c("HUAWEI TECHNOLOGIES", "THOMSON REUTERS", "SAP AMERICA, INC.", "NEWS CORPORATION", "TYCO ELECTRONICS", "TRACFONE WIRELESS, INC.")
+  )
+```
+
+```{r}
+similar_amount_firms <- similar_amount_firms %>%
+  mutate(
+    slope_distance = abs(pre_trend - huawei_slope)
+  ) %>%
+  arrange(slope_distance)
+
+N <- 10
+top_control_firms <- similar_amount_firms %>%
+  slice_head(n = N) %>%
+  pull(client_name)
+```
+
+```{r}
+top_control_firms
+```
+
+```{r}
+df_filtered <- df %>%
+  filter(client_name %in% c("HUAWEI TECHNOLOGIES", top_control_firms))
+```
+
+
+```{r}
+pre_treatment_data <- df_filtered %>% filter(post == 0)
+
+parallel_trends_test <- feols(
+  log_amount ~ treatment * as.numeric(date) | client_name + date,
+  data = pre_treatment_data,
+  cluster = ~ client_name
+)
+
+summary(parallel_trends_test)
+
+```
+
+
+
+```{r}
+library(scales)
+df_filtered %>%
+  group_by(treatment, date) %>%
+  summarize(mean_expenditure = mean(amount, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(x = date, y = mean_expenditure, color = factor(treatment))) +
+  geom_line(size = 1.2) +
+  geom_vline(
+    xintercept = as.Date("2019-05-15"), 
+    linetype = "dashed", 
+    color = "red", 
+    size = 1, 
+    show.legend = TRUE
+  ) +
+  scale_color_manual(
+    values = c("blue", "orange", "red"),
+    labels = c("Control Group Average", "Huawei", "Sanction Date")
+  ) +
+  scale_x_date(
+    breaks = seq(min(df_filtered$date), max(df_filtered$date), by = "2 years"),
+    labels = date_format("%Y"),
+    expand = c(0, 0)
+  ) +
+  scale_y_continuous(labels = scales::dollar_format(prefix = "$")) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11),
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  labs(
+    x = "Year",
+    y = "Lobbying Expenditure ($)",
+    color = "Group"
+  )
+
+```
+
+```{r}
+did_model <- feols(
+  log_amount ~ treatment + post + treatment:post,
+  cluster = ~ client_name,
+  data = df_filtered
+)
+```
+
+
+
+```{r}
+did_model_fe <- feols(
+  log_amount ~ treatment:post | client_name + date,
+  cluster = ~ client_name,
+  data = df_filtered
+)
+
+summary(did_model_fe)
+
+```
+
+
+
+```{r}
+df_new <- df_filtered %>%
+  mutate(
+    fitted_values = predict(did_model_fe),
+    residuals = log_amount - fitted_values
+  )
+
+did_viz_fe <- df_new %>%
+  group_by(treatment, post) %>%
+  summarize(
+    mean_adjusted = mean(fitted_values, na.rm = TRUE),
+    se = sd(fitted_values, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    group = ifelse(treatment == 1, "Huawei (Treated)", "Control Group"),
+    lower = mean_adjusted - 1.96 * se,
+    upper = mean_adjusted + 1.96 * se
+  )
+
+ggplot(did_viz_fe, aes(x = as.factor(post), y = mean_adjusted, color = group, group = group)) +
+  geom_line(size = 1) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.1) +
+  labs(
+    x = "Period",
+    y = "Lobbying Expenditure (Logged)",
+    color = "Group"
+  ) +
+  scale_x_discrete(labels = c("Pre-Sanction (2008-2019Q2)", "Post-Sanction (2019Q3-2022)")) +
+  scale_color_brewer(palette = "Set1") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+```
+
+
+```{r}
+modelsummary(
+  list("Fixed Effects DiD" = did_model_fe, "DiD" = did_model),
+  stars = TRUE,
+  output = "markdown")
+)
+```
+
+
